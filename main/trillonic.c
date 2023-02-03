@@ -10,7 +10,7 @@
 #include "driver/sdmmc_host.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2s_std.h"
+#include "driver/i2s_pdm.h"
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "sdkconfig.h"
@@ -27,15 +27,14 @@ static sdmmc_card_t *card;
 #define SDIO_DAT2 GPIO_NUM_7
 #define SDIO_CS_DAT3 GPIO_NUM_10
 
-#define I2S_WS GPIO_NUM_6
-#define I2S_BCLK GPIO_NUM_12
+#define I2S_CLK GPIO_NUM_12
 #define I2S_DIN GPIO_NUM_14
 //#define I2S_MCLK GPIO_NUM_5
 
 static i2s_chan_handle_t rx_chan; // I2S rx channel handler
 #define EXAMPLE_BUFF_SIZE 2048
 #define SAMPLE_RATE SR_44K
-#define BIT_WIDTH BD_20
+#define BIT_WIDTH I2S_DATA_BIT_WIDTH_16BIT
 
 static void sd_card_setup(void)
 {
@@ -98,42 +97,32 @@ static void i2s_example_init(void)
     i2s_chan_config_t rx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&rx_chan_cfg, NULL, &rx_chan));
 
-    i2s_std_clk_config_t clk_cfg = {
+    i2s_pdm_rx_clk_config_t clk_cfg = {
         .clk_src = I2S_CLK_SRC_DEFAULT,
         .sample_rate_hz = SAMPLE_RATE,
-        .mclk_multiple = I2S_MCLK_MULTIPLE_384};
+        .mclk_multiple = I2S_MCLK_MULTIPLE_256,
+        .dn_sample_mode = I2S_PDM_DSR_8S};
 
-    i2s_std_slot_config_t slot_cfg = {
+    i2s_pdm_rx_slot_config_t slot_cfg = {
         .data_bit_width = BIT_WIDTH,
         .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
-        .slot_mode = I2S_SLOT_MODE_STEREO,
+        .slot_mode = I2S_SLOT_MODE_MONO,
         .slot_mask = I2S_STD_SLOT_BOTH,
-        .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
-        .ws_pol = false,
-        .bit_shift = true,
-        .left_align = false,
-        .big_endian = false,
-        .bit_order_lsb = false};
+        };
 
-    i2s_std_config_t rx_std_cfg = {
+    i2s_pdm_rx_config_t rx_pdm_cfg = {
         .clk_cfg = clk_cfg,
         .slot_cfg = slot_cfg,
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = I2S_BCLK,
-            .ws = I2S_WS,
-            .dout = I2S_GPIO_UNUSED,
+            .clk = I2S_CLK,
             .din = I2S_DIN,
             .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
+                .clk_inv = false,
             },
         },
     };
 
-    rx_std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_chan, &rx_std_cfg));
+    ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(rx_chan, &rx_pdm_cfg));
 }
 
 static void i2s_example_read_task(void *args)
@@ -143,7 +132,7 @@ static void i2s_example_read_task(void *args)
     assert(r_buf); // Check if r_buf allocation success
     size_t r_bytes = 0;
     uint32_t dataSize = 0;
-    const char *file_audio = MOUNT_POINT "/audio.bin";
+    const char *file_audio = MOUNT_POINT "/audio.wav";
     ESP_LOGI(TAG, "Opening file %s", file_audio);
     FILE *f = fopen(file_audio, "wb");
     if (f == NULL)
@@ -152,13 +141,13 @@ static void i2s_example_read_task(void *args)
         return;
     }
 
-    // cfgWave(&wHdr, STEREO, SAMPLE_RATE, BIT_WIDTH);
-    // ESP_LOGI(TAG, "Wave Header Configured");
+    cfgWave(&wHdr, STEREO, SAMPLE_RATE, BIT_WIDTH);
+    ESP_LOGI(TAG, "Wave Header Configured");
 
-    // fwrite(&wHdr, sizeof(wHdr), 1, f);
-    // ESP_LOGI(TAG, "Wrote Header to file");
+    fwrite(&wHdr, sizeof(wHdr), 1, f);
+    ESP_LOGI(TAG, "Wrote Header to file");
 
-    while (dataSize < (1024*512))
+    while (dataSize < (1024*1024*2))
     {
         /* Read i2s data */
         if (i2s_channel_read(rx_chan, r_buf, EXAMPLE_BUFF_SIZE, &r_bytes, 100) == ESP_OK)
@@ -166,21 +155,21 @@ static void i2s_example_read_task(void *args)
             dataSize += r_bytes;
             // Write the data
             fwrite(r_buf, r_bytes, 1, f);
-            // Get the current position of the file pointer
-            // int end_pos = ftell(f);
-            // // Calculate the total size of the file
-            // int totalSize = end_pos;
-            // //ESP_LOGI(TAG, "RX: %d bytes, FSize: %d", r_bytes, totalSize);
-            // // Update the chunkSize field in the RIFF header
-            // wHdr.fileSize = totalSize - 8;
-            // wHdr.data_bytes = dataSize;
-            // // Seek back to the beginning of the file
-            // fseek(f, 0, SEEK_SET);
-            // // Write the updated header
-            // //TODO: Should I only write the size, or the entire header every time?
-            // fwrite(&wHdr, sizeof(wHdr), 1, f);
-            // // Seek back to the end of the file
-            // fseek(f, end_pos, SEEK_SET);
+            //Get the current position of the file pointer
+            int end_pos = ftell(f);
+            // Calculate the total size of the file
+            int totalSize = end_pos;
+            //ESP_LOGI(TAG, "RX: %d bytes, FSize: %d", r_bytes, totalSize);
+            // Update the chunkSize field in the RIFF header
+            wHdr.fileSize = totalSize - 8;
+            wHdr.data_bytes = dataSize;
+            // Seek back to the beginning of the file
+            fseek(f, 0, SEEK_SET);
+            // Write the updated header
+            //TODO: Should I only write the size, or the entire header every time?
+            fwrite(&wHdr, sizeof(wHdr), 1, f);
+            // Seek back to the end of the file
+            fseek(f, end_pos, SEEK_SET);
             fflush(f);
             fsync(fileno(f));
         }
