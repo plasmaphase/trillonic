@@ -56,13 +56,10 @@ typedef struct wavHdr_t
     uint32_t byteRate;    // numChannels * sampleRate * bitDepth / 8
     uint16_t blockAlign;  // numChannels * bitDepth / 8
     uint16_t bitDepth;    // bitDepth_t
-} wavHdr_t;
-
-typedef struct wavDataHdr_t
-{
     char dataHdr[HDR_STR_LEN];
     uint32_t data_bytes; // Number of bytes in data. Number of samples * num_channels * sample byte size
-} wavDataHdr_t;
+} wavHdr_t;
+
 
 static inline void cfgWave(wavHdr_t *wHdr, channels_t channels, sampleRate_t sRate, bitDepth_t bDepth)
 {
@@ -71,6 +68,7 @@ static inline void cfgWave(wavHdr_t *wHdr, channels_t channels, sampleRate_t sRa
     strcpy(&wHdr->riffStr[0], "RIFF");
     strcpy(&wHdr->format[0], "WAVE");
     strcpy(&wHdr->fmtHdr[0], "fmt ");
+    strcpy(&wHdr->dataHdr[0], "data");
     wHdr->fmtChunkSize = FMT_PCM_CHUNK_SIZE;
 
     // configure variables
@@ -79,6 +77,6 @@ static inline void cfgWave(wavHdr_t *wHdr, channels_t channels, sampleRate_t sRa
     wHdr->bitDepth = bDepth;
 
     // calculate rate/alignment fields
-    wHdr->byteRate = (channels * sRate * (bDepth / 8));
-    wHdr->blockAlign = (channels * (bDepth / 8));
+    wHdr->byteRate = (channels * sRate * bDepth) / 8;
+    wHdr->blockAlign = (channels * bDepth) / 8;
 }

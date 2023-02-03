@@ -30,9 +30,12 @@ static sdmmc_card_t *card;
 #define I2S_WS GPIO_NUM_6
 #define I2S_BCLK GPIO_NUM_12
 #define I2S_DIN GPIO_NUM_14
+//#define I2S_MCLK GPIO_NUM_5
 
 static i2s_chan_handle_t rx_chan; // I2S rx channel handler
 #define EXAMPLE_BUFF_SIZE 2048
+#define SAMPLE_RATE SR_44K
+#define BIT_WIDTH BD_20
 
 static void sd_card_setup(void)
 {
@@ -97,15 +100,15 @@ static void i2s_example_init(void)
 
     i2s_std_clk_config_t clk_cfg = {
         .clk_src = I2S_CLK_SRC_DEFAULT,
-        .sample_rate_hz = 16000,
-        .mclk_multiple = I2S_MCLK_MULTIPLE_512};
+        .sample_rate_hz = SAMPLE_RATE,
+        .mclk_multiple = I2S_MCLK_MULTIPLE_384};
 
     i2s_std_slot_config_t slot_cfg = {
-        .data_bit_width = I2S_DATA_BIT_WIDTH_24BIT,
+        .data_bit_width = BIT_WIDTH,
         .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
         .slot_mode = I2S_SLOT_MODE_STEREO,
         .slot_mask = I2S_STD_SLOT_BOTH,
-        .ws_width = I2S_DATA_BIT_WIDTH_24BIT,
+        .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
         .ws_pol = false,
         .bit_shift = true,
         .left_align = false,
@@ -116,7 +119,7 @@ static void i2s_example_init(void)
         .clk_cfg = clk_cfg,
         .slot_cfg = slot_cfg,
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED, // some codecs may require mclk signal, this example doesn't need it
+            .mclk = I2S_GPIO_UNUSED,
             .bclk = I2S_BCLK,
             .ws = I2S_WS,
             .dout = I2S_GPIO_UNUSED,
@@ -136,11 +139,11 @@ static void i2s_example_init(void)
 static void i2s_example_read_task(void *args)
 {
     wavHdr_t wHdr;
-    wavDataHdr_t wDataHdr;
     uint8_t *r_buf = (uint8_t *)calloc(1, EXAMPLE_BUFF_SIZE);
     assert(r_buf); // Check if r_buf allocation success
     size_t r_bytes = 0;
-    const char *file_audio = MOUNT_POINT "/wave.wav";
+    uint32_t dataSize = 0;
+    const char *file_audio = MOUNT_POINT "/audio.bin";
     ESP_LOGI(TAG, "Opening file %s", file_audio);
     FILE *f = fopen(file_audio, "wb");
     if (f == NULL)
@@ -149,36 +152,35 @@ static void i2s_example_read_task(void *args)
         return;
     }
 
-    cfgWave(&wHdr, STEREO, SR_16K, BD_16);
-    ESP_LOGI(TAG, "Wave Header Configured");
+    // cfgWave(&wHdr, STEREO, SAMPLE_RATE, BIT_WIDTH);
+    // ESP_LOGI(TAG, "Wave Header Configured");
 
-    fwrite(&wHdr, sizeof(wHdr), 1, f);
-    ESP_LOGI(TAG, "Wrote Header to file");
+    // fwrite(&wHdr, sizeof(wHdr), 1, f);
+    // ESP_LOGI(TAG, "Wrote Header to file");
 
-    while (1)
+    while (dataSize < (1024*512))
     {
         /* Read i2s data */
         if (i2s_channel_read(rx_chan, r_buf, EXAMPLE_BUFF_SIZE, &r_bytes, 100) == ESP_OK)
         {
-            wDataHdr.data_bytes = r_bytes;
-            strcpy(&wDataHdr.dataHdr[0], "data");
-            fwrite(&wDataHdr, sizeof(wDataHdr), 1, f);
+            dataSize += r_bytes;
+            // Write the data
             fwrite(r_buf, r_bytes, 1, f);
-
             // Get the current position of the file pointer
-            int end_pos = ftell(f);
-            // Calculate the total size of the file
-            int totalSize = end_pos;
-            ESP_LOGI(TAG, "RX: %d bytes, FSize: %d", r_bytes, totalSize);
-            // Update the chunkSize field in the RIFF header
-            wHdr.fileSize = totalSize - 8;
-            // Seek back to the beginning of the file
-            fseek(f, 0, SEEK_SET);
-            // Write the updated header
-            //TODO: Should I only write the size, or the entire header every time?
-            fwrite(&wHdr, sizeof(wHdr), 1, f);
-            // Seek back to the end of the file
-            fseek(f, end_pos, SEEK_SET);
+            // int end_pos = ftell(f);
+            // // Calculate the total size of the file
+            // int totalSize = end_pos;
+            // //ESP_LOGI(TAG, "RX: %d bytes, FSize: %d", r_bytes, totalSize);
+            // // Update the chunkSize field in the RIFF header
+            // wHdr.fileSize = totalSize - 8;
+            // wHdr.data_bytes = dataSize;
+            // // Seek back to the beginning of the file
+            // fseek(f, 0, SEEK_SET);
+            // // Write the updated header
+            // //TODO: Should I only write the size, or the entire header every time?
+            // fwrite(&wHdr, sizeof(wHdr), 1, f);
+            // // Seek back to the end of the file
+            // fseek(f, end_pos, SEEK_SET);
             fflush(f);
             fsync(fileno(f));
         }
@@ -186,7 +188,6 @@ static void i2s_example_read_task(void *args)
         {
             printf("Read Task: i2s read failed\n");
         }
-        // vTaskDelay(pdMS_TO_TICKS(200));
     }
     free(r_buf);
     fclose(f);
